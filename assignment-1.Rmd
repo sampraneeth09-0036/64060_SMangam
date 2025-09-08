@@ -1,0 +1,175 @@
+---
+title: "assignment-1"
+author: "Sam praneeth sasank.M"
+date: "2025-09-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(tidyverse); library(janitor); library(skimr)
+
+csv_path <- "C:/Users/samPr/OneDrive/Desktop/archive/placementdata.csv"
+placement <- readr::read_csv(csv_path, show_col_types = FALSE) %>% janitor::clean_names()
+```
+
+
+```{r}
+packages <- c("tidyverse", "janitor", "skimr")
+to_install <- packages[!packages %in% rownames(installed.packages())]
+if (length(to_install)) install.packages(to_install, repos = "https://cloud.r-project.org")
+lapply(packages, library, character.only = TRUE)
+```
+
+
+```{r}
+csv_path <- "C:/Users/samPr/OneDrive/Desktop/archive/placementdata.csv"
+placement <- readr::read_csv(csv_path, show_col_types = FALSE) %>% janitor::clean_names()
+
+print(colnames(placement))
+glimpse(placement)
+```
+
+
+
+```{r}
+# show column names clearly
+print(colnames(placement))
+# show first row with column types
+placement %>% slice(1) %>% as.data.frame()
+
+```
+
+```{r}
+library(dplyr)
+
+# helper to find column by regex (returns first match or NA)
+find_col_by_pattern <- function(df, patterns) {
+  cols <- colnames(df)
+  pattern <- paste(patterns, collapse = "|")
+  matches <- cols[grepl(pattern, cols, ignore.case = TRUE)]
+  if (length(matches) >= 1) return(matches[1]) else return(NA_character_)
+}
+
+# try to find an "ssc" column
+ssc_col <- find_col_by_pattern(placement, c("^ssc$", "ssc_p", "secondary", "ssc_percent", "ssc"))
+
+# fallback: pick first numeric column if no ssc-like column found
+num_cols <- placement %>% select(where(is.numeric)) %>% colnames()
+first_num <- if(length(num_cols)>0) num_cols[1] else NA_character_
+
+placement <- placement %>%
+  # if ssc_col found, use it; otherwise create a quartile-based grade on first numeric column
+  mutate(
+    ssc_value_for_grade = case_when(
+      !is.na(ssc_col) ~ .data[[ssc_col]],
+      TRUE ~ as.numeric(.data[[first_num]])
+    ),
+    ssc_grade = case_when(
+      !is.na(ssc_value_for_grade) & ssc_value_for_grade >= 75 ~ "A",
+      !is.na(ssc_value_for_grade) & ssc_value_for_grade >= 60 ~ "B",
+      !is.na(ssc_value_for_grade) ~ "C",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(-ssc_value_for_grade)  # drop helper column
+
+# show result
+table(placement$ssc_grade, useNA = "ifany")
+
+```
+```{r}
+# Quantitative summary across all numeric columns
+quant_summary <- placement %>%
+  select(where(is.numeric)) %>%
+  summarise(across(everything(),
+                   list(n = ~sum(!is.na(.)),
+                        mean = ~mean(., na.rm = TRUE),
+                        sd = ~sd(., na.rm = TRUE),
+                        median = ~median(., na.rm = TRUE),
+                        min = ~min(., na.rm = TRUE),
+                        max = ~max(., na.rm = TRUE)),
+                   .names = "{.col}_{.fn}")) %>%
+  pivot_longer(everything(),
+               names_to = c("variable", ".value"),
+               names_pattern = "(.*)_(n|mean|sd|median|min|max)")
+
+print(quant_summary)
+
+# Categorical summary: show counts and proportions for each non-numeric column
+cat_summary <- placement %>%
+  select(where(~!is.numeric(.))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  count(variable, value, name = "count") %>%
+  group_by(variable) %>%
+  mutate(prop = count / sum(count)) %>%
+  arrange(variable, desc(count))
+
+print(cat_summary)
+
+```
+```{r}
+if ("workex" %in% colnames(placement)) {
+  placement <- placement %>%
+    mutate(has_work_ex = if_else(
+      tolower(as.character(workex)) %in% c("yes","y","1","true"),
+      TRUE, FALSE, missing = FALSE
+    ))
+} else {
+  placement$has_work_ex <- NA
+}
+
+
+```
+
+```{r}
+library(ggplot2)
+dir.create("figures", showWarnings = FALSE)
+
+# pick histogram column: first numeric
+hist_col <- first_num
+
+if (!is.na(hist_col)) {
+  p_hist <- placement %>%
+    ggplot(aes(x = .data[[hist_col]])) +
+    geom_histogram(bins = 25) +
+    labs(title = paste("Histogram of", hist_col), x = hist_col, y = "count") +
+    theme_minimal()
+  print(p_hist)
+  ggsave(filename = file.path("figures", paste0("hist_", hist_col, ".png")), plot = p_hist, width = 7, height = 5)
+} else {
+  message("No numeric column found for histogram.")
+}
+
+# pick two numeric columns for scatter: first two numerics
+if (length(num_cols) >= 2) {
+  xcol <- num_cols[1]; ycol <- num_cols[2]
+  # find a categorical column for color if any
+  cat_cols <- placement %>% select(where(~!is.numeric(.))) %>% colnames()
+  color_col <- if(length(cat_cols) >= 1) cat_cols[1] else NULL
+
+  p_scatter <- placement %>%
+    ggplot(aes(x = .data[[xcol]], y = .data[[ycol]], color = if(!is.null(color_col)) .data[[color_col]] else NULL)) +
+    geom_point(alpha = 0.75) +
+    geom_smooth(method = "lm", se = FALSE) +
+    labs(title = paste("Scatter:", xcol, "vs", ycol), x = xcol, y = ycol, color = color_col) +
+    theme_minimal()
+
+  print(p_scatter)
+  ggsave(filename = file.path("figures", paste0("scatter_", xcol, "_vs_", ycol, ".png")), plot = p_scatter, width = 7, height = 5)
+} else {
+  message("Not enough numeric columns for scatterplot.")
+}
+
+```
+
