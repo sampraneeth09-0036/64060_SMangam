@@ -1,0 +1,163 @@
+---
+title: "Assignment-2"
+author: "Sam praneeth sasank.M"
+date: "2025-09-29"
+output: html_document
+---
+#Load Required Packages
+```{r}
+if(!require(class)) install.packages("class")
+if(!require(caret)) install.packages("caret")
+if(!require(dplyr)) install.packages("dplyr")
+if(!require(ggplot2)) install.packages("ggplot2")
+if(!require(pROC)) install.packages("pROC")
+if(!require(reshape2)) install.packages("reshape2")
+
+library(class)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(pROC)
+library(reshape2)
+```
+# 2 Load and Explore Data
+```{r}
+data <- read.csv("C:/Users/samPr/OneDrive/Desktop/fml/UniversalBank.csv")
+
+# Remove ID and ZIP Code
+data <- data %>% select(-ID, -ZIP.Code)
+
+# Create dummy variables for Education
+data$Education <- factor(data$Education, levels = c("1","2","3"))
+edu_dummies <- model.matrix(~ Education - 1, data)
+colnames(edu_dummies) <- c("Education_1","Education_2","Education_3")
+data <- cbind(data %>% select(-Education), edu_dummies)
+
+# Make sure target is factor
+data$Personal.Loan <- factor(data$Personal.Loan, levels = c(0,1))
+```
+
+#3 Partition Data: 60% Training / 40% Validation
+```{r}
+set.seed(123)
+train_index <- createDataPartition(data$Personal.Loan, p = 0.60, list = FALSE)
+train_data <- data[train_index, ]
+valid_data <- data[-train_index, ]
+
+train_X <- train_data %>% select(-Personal.Loan)
+train_y <- train_data$Personal.Loan
+valid_X <- valid_data %>% select(-Personal.Loan)
+valid_y <- valid_data$Personal.Loan
+```
+
+#4Normalize Predictors
+```{r}
+normalize <- function(x) { return((x - min(x)) / (max(x) - min(x))) }
+
+train_X_norm <- as.data.frame(lapply(train_X, normalize))
+valid_X_norm <- as.data.frame(lapply(valid_X, normalize))
+```
+
+#5 k-NN with k = 1 for Given Customer
+```{r}
+new_customer <- data.frame(
+  Age = 40, Experience = 10, Income = 84, Family = 2, CCAvg = 2,
+  Mortgage = 0, Securities.Account = 0, CD.Account = 0,
+  Online = 1, CreditCard = 1,
+  Education_1 = 0, Education_2 = 1, Education_3 = 0
+)
+
+# Normalize new customer using training min-max
+for (col in names(train_X)) {
+  new_customer[[col]] <- (new_customer[[col]] - min(train_X[[col]])) / (max(train_X[[col]]) - min(train_X[[col]]))
+}
+
+# Predict with k = 1
+pred_k1 <- knn(train = train_X_norm, test = new_customer, cl = train_y, k = 1)
+cat(" Prediction with k = 1 for new customer:", as.character(pred_k1), "\n")
+```
+#6️ Choose Best k (Accuracy & F1 vs. k)
+```{r}
+k_values <- seq(1, 21, 2)
+results <- data.frame(k = k_values, Accuracy = NA, F1 = NA)
+
+for (i in seq_along(k_values)) {
+  k <- k_values[i]
+  pred_valid <- knn(train = train_X_norm, test = valid_X_norm, cl = train_y, k = k)
+  cm <- confusionMatrix(pred_valid, factor(valid_y), positive = "1")
+  results$Accuracy[i] <- cm$overall["Accuracy"]
+  results$F1[i] <- cm$byClass["F1"]
+}
+
+#  Plot Accuracy & F1 vs. k
+melted <- melt(results, id.vars = "k", measure.vars = c("Accuracy","F1"))
+ggplot(melted, aes(x = k, y = value, color = variable)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  labs(title = "Model Performance vs. k",
+       x = "Number of Neighbors (k)",
+       y = "Metric Value") +
+  theme_minimal()
+
+# Pick best k based on F1
+best_k <- results$k[which.max(results$F1)]
+cat("Best k based on F1:", best_k, "\n")
+
+```
+#7️ Confusion Matrix (Validation)
+```{r}
+pred_valid_best <- knn(train = train_X_norm, test = valid_X_norm, cl = train_y, k = best_k)
+conf_matrix <- confusionMatrix(pred_valid_best, factor(valid_y), positive = "1")
+print(conf_matrix)
+
+#  Confusion Matrix Heatmap
+cm_df <- as.data.frame(conf_matrix$table)
+ggplot(cm_df, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 6) +
+  scale_fill_gradient(low = "steelblue", high = "darkred") +
+  labs(title = "Confusion Matrix - Validation Set", x = "True Class", y = "Predicted Class") +
+  theme_minimal()
+```
+#8 Classify the Customer with Best k
+```{r}
+pred_best <- knn(train = train_X_norm, test = new_customer, cl = train_y, k = best_k)
+cat(" Prediction for new customer with best k:", as.character(pred_best), "\n")
+```
+#9 Repartition (50% : 30% : 20%) 
+```{r}
+set.seed(456)
+train_index2 <- createDataPartition(data$Personal.Loan, p = 0.50, list = FALSE)
+train2 <- data[train_index2, ]
+remaining <- data[-train_index2, ]
+valid_index2 <- createDataPartition(remaining$Personal.Loan, p = 0.60, list = FALSE)
+valid2 <- remaining[valid_index2, ]
+test2 <- remaining[-valid_index2, ]
+
+train2_X <- train2 %>% select(-Personal.Loan)
+train2_y <- train2$Personal.Loan
+valid2_X <- valid2 %>% select(-Personal.Loan)
+valid2_y <- valid2$Personal.Loan
+test2_X <- test2 %>% select(-Personal.Loan)
+test2_y <- test2$Personal.Loan
+
+# Normalize again
+train2_X_norm <- as.data.frame(lapply(train2_X, normalize))
+valid2_X_norm <- as.data.frame(lapply(valid2_X, normalize))
+test2_X_norm <- as.data.frame(lapply(test2_X, normalize))
+
+# Predictions
+pred_train2 <- knn(train2_X_norm, train2_X_norm, cl = train2_y, k = best_k)
+pred_valid2 <- knn(train2_X_norm, valid2_X_norm, cl = train2_y, k = best_k)
+pred_test2 <- knn(train2_X_norm, test2_X_norm, cl = train2_y, k = best_k)
+
+cat("\n Confusion Matrix - Training Set:\n")
+print(confusionMatrix(pred_train2, train2_y, positive = "1"))
+
+cat("\n Confusion Matrix - Validation Set:\n")
+print(confusionMatrix(pred_valid2, valid2_y, positive = "1"))
+
+cat("\n Confusion Matrix - Test Set:\n")
+print(confusionMatrix(pred_test2, test2_y, positive = "1"))
+```
+
