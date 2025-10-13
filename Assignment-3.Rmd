@@ -1,0 +1,119 @@
+---
+title: "Assignment-3"
+author: "Sam praneeth sasank.M"
+date: "2025-10-12"
+output: html_document
+---
+# Load required libraries
+```{r}
+library(tidyverse)
+library(caret)
+library(e1071)
+library(reshape2)
+set.seed(123)
+
+```
+```{r}
+# Read the dataset
+bank <- read.csv("C:/Users/samPr/OneDrive/Desktop/fml/UniversalBank (1).csv")
+
+# Remove unneeded columns
+bank <- bank %>% select(-ID, -ZIP.Code)
+
+# Rename columns for clarity
+bank <- bank %>% 
+  rename(Loan = Personal.Loan,
+         CC = CreditCard,
+         Online = Online)
+
+# Partition into Training (60%) and Validation (40%)
+train_index <- createDataPartition(bank$Loan, p = 0.6, list = FALSE)
+train_data <- bank[train_index, ]
+valid_data <- bank[-train_index, ]
+
+# Check structure
+glimpse(train_data)
+
+```
+# (A) Create a pivot table for the training data with Online as a column variable, CC as a rowvariable, and Loan as a secondary row variable. The values inside the table should convey the count. In R use functions melt() and cast(), or function table(). In Python, use panda dataframe methods melt() and pivot()
+```{r}
+# Create pivot table using base R
+pivot_table <- with(train_data, table(CC, Online, Loan))
+pivot_table
+
+# Display using dplyr for clearer output
+train_data %>%
+  group_by(CC, Online, Loan) %>%
+  summarise(Count = n(), .groups = 'drop')
+
+```
+# (B) Consider the task of classifying a customer who owns a bank credit card and is actively using online banking services. Looking at the pivot table, what is the probability that this customer will accept the loan offer? [This is the probability of loan acceptance (Loan = 1) conditional on having a bank credit card (CC = 1) and being an active user of online banking services (Online = 1)].
+```{r}
+prob_table <- prop.table(table(train_data$CC, train_data$Online, train_data$Loan), c(1,2))
+prob_cc1_online1 <- prob_table["1","1","1"]
+prob_cc1_online1
+
+```
+# (c) Create two separate pivot tables for the training data. One will have Loan (rows) as a function of Online (columns) and the other will have Loan (rows) as a function of CC.
+```{r}
+loan_online <- with(train_data, table(Loan, Online))
+loan_online
+
+loan_cc <- with(train_data, table(Loan, CC))
+loan_cc
+
+```
+# (D) Compute the following quantities [P(A | B) means “the probability ofA given B”]:
+#i. P(CC = 1 | Loan = 1) (the proportion of credit card holders among the loan acceptors)
+#ii. P(Online = 1 | Loan = 1)
+#iii. P(Loan = 1) (the proportion of loan acceptors)
+#iv. P(CC = 1 | Loan = 0)
+#v. P(Online = 1 | Loan = 0)
+#vi. P(Loan = 0)
+```{r}
+p_cc1_loan1 <- sum(train_data$CC == 1 & train_data$Loan == 1) / sum(train_data$Loan == 1)
+p_online1_loan1 <- sum(train_data$Online == 1 & train_data$Loan == 1) / sum(train_data$Loan == 1)
+p_loan1 <- mean(train_data$Loan == 1)
+
+p_cc1_loan0 <- sum(train_data$CC == 1 & train_data$Loan == 0) / sum(train_data$Loan == 0)
+p_online1_loan0 <- sum(train_data$Online == 1 & train_data$Loan == 0) / sum(train_data$Loan == 0)
+p_loan0 <- mean(train_data$Loan == 0)
+
+cat("P(CC=1 | Loan=1):", p_cc1_loan1, "\n")
+cat("P(Online=1 | Loan=1):", p_online1_loan1, "\n")
+cat("P(Loan=1):", p_loan1, "\n")
+cat("P(CC=1 | Loan=0):", p_cc1_loan0, "\n")
+cat("P(Online=1 | Loan=0):", p_online1_loan0, "\n")
+cat("P(Loan=0):", p_loan0, "\n")
+
+```
+# (E) Use the quantities computed above to compute the naive Bayes probability P(Loan = 1 | CC = 1, Online = 1)
+```{r}
+num <- p_cc1_loan1 * p_online1_loan1 * p_loan1
+den <- num + (p_cc1_loan0 * p_online1_loan0 * p_loan0)
+p_loan1_given_cc1_online1 <- num / den
+p_loan1_given_cc1_online1
+
+```
+# (F) Compare this value with the one obtained from the pivot table in (B). Which is a more accurate estimate?
+```{r}
+cat("Pivot Table Probability:", prob_cc1_online1, "\n")
+cat("Naive Bayes Probability:", p_loan1_given_cc1_online1, "\n")
+
+```
+# (G) Which of the entries in this table are needed for computing P(Loan = 1 | CC = 1, Online = 1)? Run naive Bayes on the data. Examine the model output on training data, and find the entry that corresponds to P(Loan = 1 | CC = 1, Online = 1). Compare this to the number you obtained in (E).
+
+```{r}
+# Fit the Naive Bayes model
+nb_model <- naiveBayes(as.factor(Loan) ~ as.factor(CC) + as.factor(Online),
+                       data = train_data)
+
+# Predict for CC=1 and Online=1
+test_case <- data.frame(CC = 1, Online = 1)
+pred_probs <- predict(nb_model, test_case, type = "raw")
+pred_probs
+
+cat("Model P(Loan=1 | CC=1, Online=1):", pred_probs[,"1"], "\n")
+
+```
+
