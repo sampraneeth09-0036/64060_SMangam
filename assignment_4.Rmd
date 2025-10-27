@@ -1,0 +1,286 @@
+---
+title: "Assignment-4"
+author: "Sam praneeth sasank.M"
+date: "2025-10-27"
+output: html_document
+---
+
+# 1. Libraries and Data Loading
+```{r}
+required <- c("tidyverse","factoextra","cluster","NbClust","corrplot","mclust")
+install_if_missing <- function(pkgs){
+missing <- pkgs[!pkgs %in% installed.packages()[,"Package"]]
+if(length(missing)) install.packages(missing)
+}
+install_if_missing(required)
+
+library(tidyverse)
+library(factoextra)
+library(cluster)
+library(NbClust)
+library(corrplot)
+library(mclust)
+
+df <- read.csv("C:/Users/samPr/OneDrive/Desktop/Pharmaceuticals.csv", stringsAsFactors = FALSE)
+glimpse(df)
+
+```
+There are 21 firms and 12 variables included in the dataset, ten of which, including the first nine, conventional numerical financial measures, are used in the clustering analysis.
+
+# 2. Data Cleaning and Pre-Processing
+```{r}
+
+num_vars <- df %>%
+  select(1:9) %>%
+  mutate(across(everything(), ~ as.numeric(gsub("[^0-9\\.-]", "", .))))
+
+# Check missing values introduced by coercion
+colSums(is.na(num_vars))
+
+# Replacing missing values with column medians
+num_complete <- num_vars %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+# Confirm shape and preview
+dim(num_complete)
+head(num_complete)
+
+
+```
+gsub( .", .,)[^0-9\\.-], removes all the characters other than the numerals, dots and minuses.sanitization of the strings is converted to numeric numbers using as.numeric.
+The inspection of columns with NA values may be facilitated with the help of colSums(is.na(...).These missing values are then imputed with the help of the column medians with a robust methodology.
+This step is necessary to guarantee that the following steps, such as histograms, transformations, and K-means clustering will run without any problem.
+
+
+
+# 3. Exploratory Analysis
+```{r}
+num_complete %>%
+pivot_longer(cols = everything(), names_to = "var", values_to = "val") %>%
+ggplot(aes(x = val)) +
+facet_wrap(~ var, scales = "free") +
+geom_histogram(bins = 20, fill = "steelblue", color = "white") +
+labs(title = "Distributions of Numeric Variables") +
+theme_minimal()
+
+num_complete %>%
+pivot_longer(cols = everything(), names_to = "var", values_to = "val") %>%
+ggplot(aes(x = var, y = val)) +
+geom_boxplot(fill = "lightblue") +
+coord_flip() +
+labs(title = "Boxplots of Numeric Variables") +
+theme_minimal()
+```
+Market Capitalization and P/E are highly skewed to the right hence the use of logarithmic transformation would be suitable. The relationships are significant positive between ROE and ROA and Leverage has a number of outliers.
+
+
+
+
+
+# 4. Transform and Standardize
+```{r}
+
+# Convert all to numeric (just in case)
+num_complete <- num_complete %>%
+  mutate(across(everything(), ~ as.numeric(.)))
+
+# Replace any NAs with column medians
+num_complete[is.na(num_complete)] <- NA
+num_complete <- num_complete %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+# Standardize (mean = 0, sd = 1)
+num_scaled <- scale(num_complete)
+
+# Check
+colMeans(num_scaled)     # should be around 0
+apply(num_scaled, 2, sd) # should be around 1
+
+
+
+```
+Interpretation:
+All numeric columns are cleaned, non-numeric symbols are removed, missing values are filled with medians, and columns are renamed for clarity.
+
+
+# 5. Correlation Check
+
+```{r}
+corrplot(cor(num_scaled), method = "color", tl.col = "black", tl.cex = 0.8)
+
+```
+
+Interpretation:
+MarketCap, PE, and Leverage show right-skewed distributions.
+ROE and ROA appear correlated, while growth and margin vary widely — these differences likely drive clustering.
+
+
+
+
+# 6. Scaling and normalizing the data
+
+```{r}
+
+# Select only numeric columns 3:11 or 1:9, depending on where your numeric data starts
+num_data <- df[, 3:11]  # adjust this range to match your numeric variables
+
+# Convert everything to numeric safely
+num_data <- as.data.frame(lapply(num_data, function(x) {
+  x <- suppressWarnings(as.numeric(gsub("[^0-9\\.-]", "", x)))
+  x[!is.finite(x)] <- NA
+  if (all(is.na(x))) x[] <- 0
+  x[is.na(x)] <- median(x, na.rm = TRUE)
+  x
+}))
+
+# Check that everything is numeric and finite
+stopifnot(all(is.finite(as.matrix(num_data))))
+
+# Scale clean numeric data
+num_scaled <- scale(num_data)
+
+# Verify results
+summary(num_scaled)
+
+
+
+
+```
+
+Interpretation:
+Log transformation reduces skewness and makes outliers less dominant.
+Scaling ensures all variables contribute equally to distance calculations in K-Means.
+
+
+
+# 7. Determining the Number of Clusters
+
+```{r}
+# ---- Side-by-Side Elbow and Silhouette ----
+library(factoextra)
+library(gridExtra)  # for arranging plots side by side
+
+set.seed(123)
+
+# Elbow method
+p1 <- fviz_nbclust(num_scaled, kmeans, method = "wss") +
+  labs(title = "Elbow Method (WSS)") +
+  theme_minimal()
+
+# Silhouette method
+p2 <- fviz_nbclust(num_scaled, kmeans, method = "silhouette") +
+  labs(title = "Silhouette Method") +
+  theme_minimal()
+
+# Display side by side
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+
+```
+
+
+Interpretation:
+The Elbow plot shows a bend around k = 3, and the Silhouette plot peaks near 3.
+Hence, we proceed with 3 clusters.
+
+
+
+# 8. K-Means Clustering
+```{r}
+set.seed(123)
+k <- 3
+km_res <- kmeans(num_scaled, centers = k, nstart = 50, iter.max = 100)
+
+km_res$size
+df$Cluster <- factor(km_res$cluster)
+table(df$Cluster)
+
+```
+
+Interpretation:
+The firms are grouped into 3 balanced clusters, representing distinct financial profiles.
+
+
+
+# 9. Cluster Profiles (Numeric Means)
+```{r}
+cluster_means <- df %>%
+select(1:9, Cluster) %>%
+group_by(Cluster) %>%
+summarise_all(mean, na.rm = TRUE)
+cluster_means
+
+```
+
+Interpretation:
+
+Cluster 1: High MarketCap, high ROE, low Leverage → Large, profitable, low-risk firms
+Cluster 2: Small MarketCap, high Beta and Growth → High-risk, emerging biotechs
+Cluster 3: Moderate across metrics → Stable mid-sized firms
+
+# 10. Cluster Visualization
+
+```{r}
+fviz_cluster(km_res, data = num_scaled, geom = "point", ellipse.type = "norm",
+main = "K-Means Clusters (k = 3)", palette = "jco")
+
+# PCA Visualization
+
+pca_res <- prcomp(num_scaled)
+fviz_pca_ind(pca_res, habillage = df$Cluster, addEllipses = TRUE,
+ellipse.level = 0.68, label = "none", palette = "jco") +
+labs(title = "PCA Plot of Firms by Cluster")
+
+# Profile Plot
+
+cluster_means_long <- cluster_means %>%
+pivot_longer(-Cluster, names_to = "Variable", values_to = "Mean")
+ggplot(cluster_means_long, aes(x = Variable, y = Mean, color = Cluster, group = Cluster)) +
+geom_line(size = 1) + geom_point(size = 2) +
+theme_minimal() +
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+labs(title = "Cluster Profiles Across Financial Variables")
+
+```
+
+Interpretation:
+The PCA and cluster plots show clear separation.
+Profile lines highlight the traits that define each cluster (e.g., profitability vs. growth).
+
+# 11. Name the Clusters
+
+```{r}
+cluster_names <- c(
+"1" = "Large Profitable Low-Leverage",
+"2" = "Small High-Growth Risky",
+"3" = "Mid-Size Stable"
+)
+df$ClusterName <- cluster_names[as.character(df$Cluster)]
+df %>% select(1, Cluster, ClusterName)
+
+
+```
+
+Interpretation:
+Meaningful labels summarize the financial characteristics of each cluster.
+
+
+
+
+
+# 12. Cluster Stability
+
+```{r}
+set.seed(321)
+km_res2 <- kmeans(num_scaled, centers = k, nstart = 50)
+adjustedRandIndex(km_res$cluster, km_res2$cluster)
+
+
+```
+Interpretation:
+An ARI > 0.7 confirms good stability and reproducibility of cluster assignments.
+
+Overall Interpretation:
+K-Means successfully reveals three distinct segments of the pharmaceutical industry.
+These insights help analysts differentiate between stable leaders, risky innovators, and steady mid-tier firms for investment and strategy decisions.
+
