@@ -1,0 +1,108 @@
+---
+title: "Assignment-5"
+author: "Sam praneeth sasank.M"
+date: "2025-11-24"
+output: html_document
+---
+1.Load Data
+
+```{r}
+library(tidyverse)
+library(cluster)
+library(factoextra)
+
+# Load the dataset
+cereals <- read.csv("C:/Users/samPr/OneDrive/Desktop/fml/Cereals.csv")
+
+# Remove all rows with missing values
+cereals_clean <- na.omit(cereals)
+
+# Keep only numeric columns for clustering
+cereal_num <- cereals_clean %>% select_if(is.numeric)
+
+# Normalize the data
+cereal_scaled <- scale(cereal_num)
+
+```
+
+2.Compare linkage methods
+```{r}
+hc_single <- agnes(cereal_scaled, method = "single")
+hc_complete <- agnes(cereal_scaled, method = "complete")
+hc_average <- agnes(cereal_scaled, method = "average")
+hc_ward <- agnes(cereal_scaled, method = "ward")
+
+coefficients <- c(
+  single = hc_single$ac,
+  complete = hc_complete$ac,
+  average = hc_average$ac,
+  ward = hc_ward$ac
+)
+coefficients
+
+```
+#Interpretation
+All the linkage methods have varying distance measurements between clusters. The agglomerative coefficient informs us of the goodness of fit of the data to the hierarchical structure. The greater the value, the more significant is the clustering. Ward suits well with nutritional data since it is compact and balanced.
+
+3.Plot dendrogram of the best method 
+```{r}
+fviz_dend(hc_ward, k = 4, main = "Ward Linkage Dendrogram")
+```
+4.Silhouette method to choose number of clusters
+```{r}
+fviz_nbclust(cereal_scaled, FUN = hcut, method = "silhouette")
+```
+#interpretation
+The silhouette technique measures the fit of a given observation to its cluster. The greater the silhouette width, the more it clusters. It is the number of clusters that has the largest silhouette score that will be taken as the best choice. There are 4 clusters that would be more likely to provide the best separation in this dataset.
+
+5.Final clustering with Ward and chosen k
+```{r}
+final_hc <- hcut(cereal_scaled, k = 4, hc_method = "ward.D2")
+table(final_hc$cluster)
+```
+#Interpretation
+The last step of the clustering process was implemented after deciding on the most suitable clustering method (Ward) and the best number of clusters.
+The output obtained gives the rate of cereals attached to each cluster.
+These groups are associated with different patterns of nutrition, i.e. high-sugar cereals, high-fiber cereals, low-calorie cereals, and mixed-type cereals.
+
+6.Stability Check
+```{r}
+set.seed(123)
+n <- nrow(cereal_scaled)
+index_A <- sample(1:n, size = floor(0.5 * n))
+
+A <- cereal_scaled[index_A, ]
+B <- cereal_scaled[-index_A, ]
+
+hc_A <- hcut(A, k = 4, hc_method = "ward.D2")
+
+centroids_A <- aggregate(A, by = list(hc_A$cluster), mean)
+rownames(centroids_A) <- centroids_A$Group.1
+centroids_A <- centroids_A[, -1]
+
+assign_to_centroid <- function(x) {
+  d <- apply(centroids_A, 1, function(c) sum((x - c)^2))
+  which.min(d)
+}
+
+B_assignments <- apply(B, 1, assign_to_centroid)
+
+full_clusters <- hcut(cereal_scaled, k = 4, hc_method = "ward.D2")$cluster
+full_B <- full_clusters[-index_A]
+
+table(B_assignments, full_B)
+```
+#Interpretation
+Stability is a concept that measures consistency of clusters to data perturbations. We divide the dataset in two equal parts and cluster a single part and then divide the rest of the observations based on the centroid of that part to assess the consistency of the resulting assignments. In the event that most of the assignments overlap with the ones that were obtained by clustering the complete dataset, the cluster structure may be said to be stable.
+
+7.Identify a "Healthy Cereals" Cluster
+```{r}
+clusters <- final_hc$cluster
+cluster_profile <- aggregate(cereal_num, by = list(cluster = clusters), mean)
+cluster_profile
+healthy_cluster <- cluster_profile$cluster[which.min(cluster_profile$sugars)]
+healthy_cluster
+healthy_cereals <- cereals_clean[clusters == healthy_cluster, ]
+healthy_cereals
+```
+
